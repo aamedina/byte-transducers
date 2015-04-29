@@ -154,16 +154,23 @@
                   (bit-or (long %2) 0xff000000)
                   %2))
 
-(def-primitive-codec identity 0 nil nil)
-
 (defn fast-forward
   [^Buffer buf ^long n]
   (.position buf (+ (.position buf) n)))
+
+(def identity
+  (fn
+    ([] 0)
+    ([^ByteBuffer buf] [(.slice buf) (fast-forward buf (.limit buf))])
+    ([^ByteBuffer buf val] buf)))
 
 (defprotocol ByteRepresentable
   (^long -sizeof [o]))
 
 (extend-protocol ByteRepresentable
+  clojure.lang.Sequential
+  (-sizeof [coll] (reduce + (map -sizeof coll)))
+  
   clojure.lang.PersistentVector
   (-sizeof [coll] (reduce + (map -sizeof coll)))
 
@@ -436,22 +443,27 @@
       ([buf val] (codec buf (body->header val))))))
 
 (defn repeated
-  [codec & {:keys [prefix delimiters]}]
+  [codec & {:keys [length prefix delimiters]}]
   (let [len (sizeof codec)]
-    (if prefix
-      (fn
-        (^long [] (+ len (sizeof prefix)))
-        ([buf]
-         (let [prefix (prefix buf)]
-           (if (reduced? prefix)
-             prefix
-             (let [n (prefix 0)]
-               (decode-all buf (repeat n codec))))))
-        ([buf vals] (encode-all buf (repeat (count vals) codec))))
-      (fn
-        (^long [] len)
-        ([buf] (decode-all buf (repeat codec)))
-        ([buf vals] (encode-all buf (repeat (count vals) codec) vals))))))
+    (cond
+      prefix (fn
+               (^long [] (+ len (sizeof prefix)))
+               ([buf]
+                (let [prefix (prefix buf)]
+                  (if (reduced? prefix)
+                    prefix
+                    (let [n (prefix 0)]
+                      (decode-all buf (repeat n codec))))))
+               ([buf vals] (encode-all buf (repeat (count vals) codec))))
+      length (fn
+               (^long [] len)
+               ([buf] (decode-all buf (repeat length codec)))
+               ([buf vals] (encode-all buf (repeat (count vals) codec) vals)))
+      :else (fn
+              (^long [] len)
+              ([buf] (decode-all buf (repeat codec)))
+              ([buf vals]
+               (encode-all buf (repeat (count vals) codec) vals))))))
 
 (defn- string-codec
   [^Charset charset ^long len]
