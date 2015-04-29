@@ -236,7 +236,7 @@
                        (update 0 conj (ret 0))
                        (assoc 1 (ret 1))))))
              [[] buf] codecs)
-     not-found)))
+     (reduced buf))))
 
 (defn encode
   ([codec val]
@@ -258,7 +258,22 @@
         cnt (count codecs)]
     (fn
       (^long [] len)
-      ([^Buffer buf] (decode-all buf codecs [[] buf]))
+      ([^Buffer buf]
+       (if (.hasRemaining buf)
+         (reduce (fn [result codec]
+                   (let [ret (if (fn? codec)
+                               (codec (result 1))
+                               [codec (result 1)])]
+                     (if (reduced? ret)
+                       (cond
+                         (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
+                         (.hasRemaining buf) (reduced (assoc result 1 buf))
+                         :else (reduced result))
+                       (-> result
+                           (update 0 conj (ret 0))
+                           (assoc 1 (ret 1))))))
+                 [[] buf] codecs)
+         [[] buf]))
       ([buf vals] (encode-all buf codecs)))))
 
 (defn ordered-map
