@@ -161,7 +161,10 @@
 (def identity
   (fn
     ([] 0)
-    ([^ByteBuffer buf] [(.slice buf) (fast-forward buf (.limit buf))])
+    ([^ByteBuffer buf]
+     (if (>= (.remaining buf) (.limit buf))
+       [(.slice buf) (fast-forward buf (.limit buf))]
+       (reduced buf)))
     ([^ByteBuffer buf val] buf)))
 
 (defprotocol ByteRepresentable
@@ -217,22 +220,23 @@
   (first (codec (.rewind buf))))
 
 (defn decode-all
-  [^Buffer buf codecs]
-  (if (.hasRemaining buf)
-    (reduce (fn [result codec]
-              (let [ret (if (fn? codec)
-                          (codec (result 1))
-                          [codec (result 1)])]
-                (if (reduced? ret)
-                  (cond
-                    (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
-                    (.hasRemaining buf) (reduced (assoc result 1 buf))
-                    :else (reduced result))
-                  (-> result
-                      (update 0 conj (ret 0))
-                      (assoc 1 (ret 1))))))
-            [[] buf] codecs)
-    (reduced buf)))
+  ([buf codecs] (decode-all buf codecs (reduced buf)))
+  ([^Buffer buf codecs not-found]
+   (if (.hasRemaining buf)
+     (reduce (fn [result codec]
+               (let [ret (if (fn? codec)
+                           (codec (result 1))
+                           [codec (result 1)])]
+                 (if (reduced? ret)
+                   (cond
+                     (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
+                     (.hasRemaining buf) (reduced (assoc result 1 buf))
+                     :else (reduced result))
+                   (-> result
+                       (update 0 conj (ret 0))
+                       (assoc 1 (ret 1))))))
+             [[] buf] codecs)
+     not-found)))
 
 (defn encode
   ([codec val]
@@ -254,7 +258,7 @@
         cnt (count codecs)]
     (fn
       (^long [] len)
-      ([buf] (decode-all buf codecs))
+      ([^Buffer buf] (decode-all buf codecs [[] buf]))
       ([buf vals] (encode-all buf codecs)))))
 
 (defn ordered-map
@@ -311,7 +315,9 @@
          (if (reduced? block)
            block
            (let [ret (codec (block 0))]
-             [(ret 0) (fast-forward buf (.position ^Buffer (ret 1)))]))))
+             (if (reduced? ret)
+               ret
+               [(ret 0) (fast-forward buf (.position ^Buffer (ret 1)))])))))
       ([buf val] (codec buf val)))))
 
 (defn prefix
@@ -323,7 +329,10 @@
          len (sizeof codec)]
      (fn
        (^long [] len)
-       ([buf] (update (codec buf) 0 to-count))
+       ([^Buffer buf]
+        (if (.hasRemaining buf)
+          (update (codec buf) 0 to-count)
+          (reduced buf)))
        ([buf n] (codec buf (from-count n)))))))
 
 (defn delimiter-bytes
@@ -436,10 +445,10 @@
     (fn
       (^long [] len)
       ([buf]
-       (let [header (codec buf)]
-         (if (reduced? header)
-           header
-           ((header->body (header 0)) buf))))
+       (let [ret (codec buf)]
+         (if (reduced? ret)
+           ret
+           ((header->body (ret 0)) buf))))
       ([buf val] (codec buf (body->header val))))))
 
 (defn repeated
