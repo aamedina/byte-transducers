@@ -220,23 +220,23 @@
   (first (codec (.rewind buf))))
 
 (defn decode-all
-  ([buf codecs] (decode-all buf codecs (reduced buf)))
-  ([^Buffer buf codecs not-found]
-   (if (.hasRemaining buf)
-     (reduce (fn [result codec]
-               (let [ret (if (fn? codec)
-                           (codec (result 1))
-                           [codec (result 1)])]
-                 (if (reduced? ret)
-                   (cond
-                     (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
-                     (.hasRemaining buf) (reduced (assoc result 1 buf))
-                     :else (reduced result))
-                   (-> result
-                       (update 0 conj (ret 0))
-                       (assoc 1 (ret 1))))))
-             [[] buf] codecs)
-     (reduced buf))))
+  [^Buffer buf codecs]
+  (cond
+    (.hasRemaining buf)
+    (reduce (fn [result codec]
+              (let [ret (if (fn? codec)
+                          (codec (result 1))
+                          [codec (result 1)])]
+                (if (reduced? ret)
+                  (cond
+                    (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
+                    (.hasRemaining buf) (reduced (assoc result 1 buf))
+                    :else (reduced result))
+                  (-> result
+                      (update 0 conj (ret 0))
+                      (assoc 1 (ret 1))))))
+            [[] buf] codecs)
+    :else (reduced buf)))
 
 (defn encode
   ([codec val]
@@ -258,22 +258,7 @@
         cnt (count codecs)]
     (fn
       (^long [] len)
-      ([^Buffer buf]
-       (if (.hasRemaining buf)
-         (reduce (fn [result codec]
-                   (let [ret (if (fn? codec)
-                               (codec (result 1))
-                               [codec (result 1)])]
-                     (if (reduced? ret)
-                       (cond
-                         (.hasRemaining ^Buffer @ret) (assoc result 1 @ret)
-                         (.hasRemaining buf) (reduced (assoc result 1 buf))
-                         :else (reduced result))
-                       (-> result
-                           (update 0 conj (ret 0))
-                           (assoc 1 (ret 1))))))
-                 [[] buf] codecs)
-         [[] buf]))
+      ([^Buffer buf] (decode-all buf codecs))
       ([buf vals] (encode-all buf codecs)))))
 
 (defn ordered-map
@@ -289,7 +274,11 @@
         len (codec)]
     (fn
       ([] len)
-      ([buf] (update (codec buf) 0 #(zipmap ks %)))
+      ([buf]
+       (let [ret (codec buf)]
+         (if (reduced? ret)
+           [(zipmap ks (repeat (count keyvals) nil)) buf]
+           (update ret 0 #(zipmap ks %)))))
       ([buf m] (codec buf (map m ks))))))
 
 (defn finite-block
